@@ -1,0 +1,46 @@
+#!/bin/bash
+
+set -e
+
+if [[ -n "${REAL_ESRGAN_DEBUG}" ]]; then
+    set -x
+fi
+
+function usage() {
+    echo -n \
+        "Usage: $(basename "$0")
+Run a console in a docker container with all prerequisites installed.
+Must be run from the repository root.
+
+Environment:
+DATASETS_DIR  Host directory mounted at /Real-ESRGAN/DATASETS (default: /mnt/c/DATASETS).
+              Skipped with a warning if it does not exist.
+"
+}
+
+if [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+DATASETS_DIR="${DATASETS_DIR:-/mnt/c/DATASETS}"
+datasets_mount=()
+if [ -d "${DATASETS_DIR}" ]; then
+    datasets_mount=(-v "${DATASETS_DIR}:/Real-ESRGAN/DATASETS")
+else
+    echo "Warning: ${DATASETS_DIR} does not exist, skipping DATASETS mount" >&2
+fi
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    # Mounting the repo over /Real-ESRGAN hides realesrgan/version.py, which setup.py generates
+    # at build time and .gitignore keeps off the host. Re-running the editable install regenerates
+    # it in the mount, otherwise `import realesrgan` fails immediately.
+    docker run --rm -it --gpus all \
+        --ipc=host \
+        -v "$(pwd):/Real-ESRGAN" \
+        "${datasets_mount[@]}" \
+        -p 8000:8000 \
+        real-esrgan:local \
+        /bin/bash -c 'pip install -q --no-deps -e . \
+            && chown --reference=setup.py realesrgan/version.py 2>/dev/null || true; exec bash'
+fi

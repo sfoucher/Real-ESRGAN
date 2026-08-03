@@ -1,0 +1,49 @@
+#!/bin/bash
+
+set -e
+
+if [[ -n "${REAL_ESRGAN_DEBUG}" ]]; then
+    set -x
+fi
+
+function usage() {
+
+    echo -n \
+        "Usage: $(basename "$0")
+Build real-esrgan container. Must be run from the repository root
+
+Options:
+--no-cache  Do not use cache when building the images
+--pull      Attempt to pull upstream images before building
+"
+}
+
+while [[ $# -gt 0 ]]
+do
+    case "$1" in
+        --help)
+        usage
+        exit 0
+        ;;
+
+        --no-cache)
+        NO_CACHE="--no-cache"
+        shift
+        ;;
+
+        --pull)
+        PULL="--pull"
+        shift
+        ;;
+
+        *)
+        echo "Unknown option: $1" >&2
+        usage
+        exit 1
+        ;;
+    esac
+done
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    docker build $PULL $NO_CACHE --target dev -t real-esrgan:local -f docker/Dockerfile .
+fi

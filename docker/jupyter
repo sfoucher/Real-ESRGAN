@@ -1,0 +1,35 @@
+#!/bin/bash
+
+set -e
+
+if [[ -n "${REAL_ESRGAN_DEBUG}" ]]; then
+    set -x
+fi
+
+function usage() {
+    echo -n \
+        "Usage: $(basename "$0")
+Launches a JupyterLab server in a docker container with all prerequisites installed.
+Serves the repository root at http://localhost:8888 -- the access token is printed on startup.
+Must be run from the repository root.
+"
+}
+
+if [ "${1:-}" = "--help" ]; then
+    usage
+    exit 0
+fi
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    # The editable reinstall is repeated at startup for the same reason as in docker/run: the bind
+    # mount hides the realesrgan/version.py generated at build time.
+    docker run --rm -it --gpus all \
+        --ipc=host \
+        -v "$(pwd):/Real-ESRGAN" \
+        -p 8888:8888 \
+        real-esrgan:local \
+        /bin/bash -c 'pip install -q --no-deps -e . \
+            && chown --reference=setup.py realesrgan/version.py 2>/dev/null || true
+            exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
+                --notebook-dir=/Real-ESRGAN'
+fi
