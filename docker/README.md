@@ -1,14 +1,15 @@
 # Docker
 
-A CUDA-enabled development image for Real-ESRGAN. Both scripts must be run from the repository root.
+A CUDA-enabled development image for Real-ESRGAN.
 
 ```bash
-./docker/build          # builds real-esrgan:local
+./docker/build          # builds real-esrgan:local, then verifies GPU kernels
 ./docker/run            # interactive shell, repo bind-mounted at /Real-ESRGAN
 ./docker/jupyter        # JupyterLab on http://localhost:8888, serving the repo root
 ```
 
-`build` accepts `--no-cache` and `--pull`. `run` reads `DATASETS_DIR` (default `/mnt/c/DATASETS`) and
+`build` runs from any directory; `run` and `jupyter` must be started from the repository root, since they
+bind-mount `$(pwd)`. See `./docker/build --help` for the full option list. `run` reads `DATASETS_DIR` (default `/mnt/c/DATASETS`) and
 mounts it at `/Real-ESRGAN/DATASETS`; if the directory does not exist the mount is skipped with a warning.
 `jupyter` prints an access token on startup — copy it from the terminal to log in. `jupyterlab` is
 installed in the image rather than in `requirements.txt`, since it is not a Real-ESRGAN dependency.
@@ -27,6 +28,17 @@ ARG PYTORCH="2.11.0"
 ARG CUDA="12.8"
 ARG CUDNN="9"
 ```
+
+To try a combination without editing the Dockerfile, override on the command line — and give it a
+separate tag so the working image is not clobbered:
+
+```bash
+./docker/build --cuda 13.0 --tag real-esrgan:cu130
+./docker/build --pytorch 2.13.0 --cuda 12.6      # cu126: expect the GPU check to fail on Blackwell
+```
+
+Any arg you do not pass keeps the Dockerfile's default. Edit the `ARG`s once a combination is proven, so
+the default is the one that works.
 
 Confirm the combination actually exists before rebuilding — a wrong triple fails only after the build
 starts:
@@ -51,34 +63,35 @@ compiled inside the container — the prebuilt torch ignores it — but a stale 
 
 ## Testing a rebuild
 
-Run these after any change. Each catches a distinct failure mode; the first two are the ones that bite.
+Run these after any change. Each catches a distinct failure mode. Step 1 is automatic and catches most of
+them; steps 2 and 3 cover what only shows up once the repo is bind-mounted over the image.
 
-**1. Build.** Do not pipe to `tail`/`head` — the pipeline returns the pager's exit code, so a failed build
-reports success:
+**1. Build, which covers imports and GPU kernels.** Do not pipe to `tail`/`head` — the pipeline returns
+the pager's exit code, so a failed build reports success:
 
 ```bash
 ./docker/build > /tmp/build.log 2>&1; echo "BUILD_EXIT=$?"
 ```
 
-The Dockerfile's last stage is a deliberate import guard, so a green build already proves the Python
-environment is intact. `BUILD_EXIT=0` is the pass condition.
+`BUILD_EXIT=0` is the pass condition, and it covers two of the three failure modes on its own. The
+Dockerfile's last stage is an import guard, so a green build proves the Python environment is intact.
+`build` then runs a GPU kernel check, because `torch.cuda.is_available()` is not sufficient — it returns
+`True` on an unsupported architecture. A passing check looks like:
 
-**2. GPU kernels actually launch.** `is_available()` is not sufficient — it returns `True` on an
-unsupported architecture:
-
-```bash
-docker run --rm --gpus all real-esrgan:local python -c "
-import torch
-print('arch list:', torch.cuda.get_arch_list())
-print('capability:', torch.cuda.get_device_capability(0))
-x = torch.randn(64, 64, device='cuda'); print('matmul ok ->', (x @ x).sum().item())
-"
+```
+Verifying GPU kernels...
+  device:      NVIDIA GeForce RTX 5060
+  capability:  sm_120
+  arch list:   sm_75 sm_80 sm_86 sm_90 sm_100 sm_120
+  matmul:      ok
+real-esrgan:local ready
 ```
 
-Your card's capability must appear in the arch list (`(12, 0)` → `sm_120`), and the matmul must return a
-number rather than raise.
+Your card's capability must appear in the arch list, and the matmul must run rather than raise. The check
+is skipped automatically when no GPU runtime is available, and can be skipped explicitly with
+`--no-verify`.
 
-**3. Imports resolve against the bind-mount.** This is the path `docker/run` uses, and it differs from the
+**2. Imports resolve against the bind-mount.** This is the path `docker/run` uses, and it differs from the
 build-time environment — mounting the repo hides files the build generated:
 
 ```bash
@@ -87,7 +100,7 @@ docker run --rm --ipc=host -v "$(pwd):/Real-ESRGAN" real-esrgan:local /bin/bash 
   python -c "import realesrgan, cv2, basicsr, gfpgan; from realesrgan import RealESRGANer; print(\"ok\")"'
 ```
 
-**4. End-to-end inference.** Downloads ~64 MB of weights on first run into `weights/`:
+**3. End-to-end inference.** Downloads ~64 MB of weights on first run into `weights/`:
 
 ```bash
 docker run --rm --gpus all --ipc=host -v "$(pwd):/Real-ESRGAN" real-esrgan:local \
