@@ -12,6 +12,10 @@ function usage() {
 Launches a JupyterLab server in a docker container with all prerequisites installed.
 Serves the repository root at http://localhost:8888 -- the access token is printed on startup.
 Must be run from the repository root.
+
+Environment:
+DATASET_DIR   Host directory mounted at /datasets (default: /mnt/c/temp), so notebook data lives
+              outside the repo. Skipped with a warning if it does not exist.
 "
 }
 
@@ -20,12 +24,21 @@ if [ "${1:-}" = "--help" ]; then
     exit 0
 fi
 
+DATASET_DIR="${DATASET_DIR:-/mnt/c/temp}"
+dataset_mount=()
+if [ -d "${DATASET_DIR}" ]; then
+    dataset_mount=(-v "${DATASET_DIR}:/datasets")
+else
+    echo "Warning: ${DATASET_DIR} does not exist, skipping /datasets mount" >&2
+fi
+
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     # The editable reinstall is repeated at startup for the same reason as in docker/run: the bind
     # mount hides the realesrgan/version.py generated at build time.
     docker run --rm -it --gpus all \
         --ipc=host \
         -v "$(pwd):/Real-ESRGAN" \
+        "${dataset_mount[@]}" \
         -p 8888:8888 \
         real-esrgan:local \
         /bin/bash -c 'pip install -q --no-deps -e . \

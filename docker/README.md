@@ -9,10 +9,29 @@ A CUDA-enabled development image for Real-ESRGAN.
 ```
 
 `build` runs from any directory; `run` and `jupyter` must be started from the repository root, since they
-bind-mount `$(pwd)`. See `./docker/build --help` for the full option list. `run` reads `DATASETS_DIR` (default `/mnt/c/DATASETS`) and
-mounts it at `/Real-ESRGAN/DATASETS`; if the directory does not exist the mount is skipped with a warning.
+bind-mount `$(pwd)`. See `./docker/build --help` for the full option list.
 `jupyter` prints an access token on startup — copy it from the terminal to log in. `jupyterlab` is
 installed in the image rather than in `requirements.txt`, since it is not a Real-ESRGAN dependency.
+
+Both scripts take optional host directories from the environment. A directory that does not exist is
+skipped with a warning rather than failing the run, so neither variable has to be set:
+
+| Variable | Default | Mounted at | Used by | Why |
+|---|---|---|---|---|
+| `DATASETS_DIR` | `/mnt/c/DATASETS` | `/Real-ESRGAN/DATASETS` | `run` | Keeps large datasets outside the repo. |
+| `DATASET_DIR` | `/mnt/c/temp` | `/datasets` | `run`, `jupyter` | Notebook working data, outside both the repo and the image. |
+
+The two names differ by a single `S` and mount different paths — check which one you mean.
+
+```bash
+./docker/jupyter                             # mounts /mnt/c/temp at /datasets
+DATASET_DIR=/mnt/d/work ./docker/jupyter     # override
+DATASETS_DIR=/path/to/data ./docker/run
+```
+
+A Colab notebook still needs its `/content/...` paths, `google.colab` calls, and `unzip` calls adapted;
+`unzip` is not installed in the image (`shutil.unpack_archive` covers it).
+`notebooks/test_Real_ESRGAN_docker.ipynb` is the already-adapted version.
 
 Because the repo is bind-mounted, edits on the host take effect inside the container immediately — no
 rebuild needed for code changes. Rebuild only when `requirements.txt`, the base image, or the Dockerfile
