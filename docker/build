@@ -1,0 +1,147 @@
+#!/bin/bash
+
+set -e
+
+if [[ -n "${REAL_ESRGAN_DEBUG}" ]]; then
+    set -x
+fi
+
+TAG="real-esrgan:local"
+VERIFY=1
+docker_args=()
+build_args=()
+
+function usage() {
+    echo -n \
+        "Usage: $(basename "$0") [options]
+Build the real-esrgan development image. Runs from any directory.
+
+Options:
+--no-cache        Do not use cache when building the image
+--pull            Attempt to pull the upstream base image before building
+-t, --tag TAG     Image tag to build (default: ${TAG})
+--pytorch VERSION Override the PYTORCH build arg
+--cuda VERSION    Override the CUDA build arg (do not go below 12.8; see docker/README.md)
+--cudnn VERSION   Override the CUDNN build arg
+--no-verify       Skip the post-build GPU kernel check
+-h, --help        Show this help
+
+Examples:
+$(basename "$0") --cuda 13.0 --tag real-esrgan:cu130
+$(basename "$0") --pytorch 2.13.0 --cuda 12.6 --no-verify
+"
+}
+
+# A build arg is only forwarded when given, so the Dockerfile's own defaults stay authoritative.
+function require_value() {
+    if [ -z "${2:-}" ]; then
+        echo "Option $1 requires a value" >&2
+        exit 1
+    fi
+}
+
+while [[ $# -gt 0 ]]
+do
+    case "$1" in
+        -h|--help)
+        usage
+        exit 0
+        ;;
+
+        --no-cache)
+        docker_args+=(--no-cache)
+        shift
+        ;;
+
+        --pull)
+        docker_args+=(--pull)
+        shift
+        ;;
+
+        -t|--tag)
+        require_value "$1" "${2:-}"
+        TAG="$2"
+        shift 2
+        ;;
+
+        --pytorch)
+        require_value "$1" "${2:-}"
+        build_args+=(--build-arg "PYTORCH=$2")
+        shift 2
+        ;;
+
+        --cuda)
+        require_value "$1" "${2:-}"
+        build_args+=(--build-arg "CUDA=$2")
+        shift 2
+        ;;
+
+        --cudnn)
+        require_value "$1" "${2:-}"
+        build_args+=(--build-arg "CUDNN=$2")
+        shift 2
+        ;;
+
+        --no-verify)
+        VERIFY=0
+        shift
+        ;;
+
+        *)
+        echo "Unknown option: $1" >&2
+        usage
+        exit 1
+        ;;
+    esac
+done
+
+# Confirms the image can actually launch kernels on this host's GPU. A cu126-or-older base builds and
+# imports cleanly on Blackwell (sm_120) and then fails every kernel launch, so checking the arch list
+# alone is not enough -- an actual matmul has to run.
+function verify_gpu() {
+    if ! docker run --rm --gpus all "${TAG}" true > /dev/null 2>&1; then
+        echo "No GPU runtime available, skipping kernel check." >&2
+        return 0
+    fi
+
+    echo "Verifying GPU kernels..."
+    docker run --rm -i --gpus all "${TAG}" python - <<'PY'
+import sys
+import torch
+
+print('  device:     ', torch.cuda.get_device_name(0))
+print('  capability:  sm_%d%d' % torch.cuda.get_device_capability(0))
+print('  arch list:  ', ' '.join(torch.cuda.get_arch_list()))
+try:
+    x = torch.randn(64, 64, device='cuda')
+    float((x @ x).sum())
+except Exception as exc:
+    print('  matmul:      FAILED ->', exc)
+    sys.exit(1)
+print('  matmul:      ok')
+PY
+}
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+    docker build \
+        "${docker_args[@]}" \
+        "${build_args[@]}" \
+        --target dev \
+        -t "${TAG}" \
+        -f docker/Dockerfile \
+        .
+
+    if [ "${VERIFY}" -eq 1 ]; then
+        if ! verify_gpu; then
+            echo "" >&2
+            echo "GPU kernel check failed for ${TAG}." >&2
+            echo "The base image's CUDA build likely predates this GPU's architecture." >&2
+            echo "See docker/README.md; --cuda 12.8 or newer is required for Blackwell (sm_120)." >&2
+            exit 1
+        fi
+    fi
+
+    echo "${TAG} ready"
+fi
